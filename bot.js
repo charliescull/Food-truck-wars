@@ -244,9 +244,9 @@ async function play(base) {
     if (state.phase === "night" && state.orders_open && key !== orderedFor) {
       try {
         report(state);
-        learn(state);
-        const order = decide(state);
-        mem.prevForecast = state.forecast;
+        let order;
+        if (STRATEGY === "v1") { learn(state); order = decide(state); mem.prevForecast = state.forecast; }
+        else order = V2.decide(state);
         const [st, res] = await call("POST", base + "/orders", order);
         if (st === 200) {
           orderedFor = key;
@@ -274,8 +274,12 @@ function report(state) {
   else console.log(`[${where}] night before day ${state.order_for_day}, cash $${cash}`);
 }
 
+const STRATEGY = process.argv.includes("--v1") ? "v1" : "v2";
+const V2 = require("./strategy.js").makeStrategy();
+
 async function main() {
   const args = process.argv.slice(2);
+  console.log("strategy " + STRATEGY);
   const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   if (!KEY) { console.error("Set NIGHTSHIFT_KEY first (you get it when you register)."); process.exit(1); }
   if (args.includes("--practice")) {
