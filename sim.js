@@ -34,6 +34,9 @@ const ARCH = {
     if (s.last_day && s.last_day.spots) spot = SPOTS.reduce((a, b) => ((s.last_day.spots[b].hungry || 0) > (s.last_day.spots[a].hungry || 0) ? b : a));
     return { spot, price: 10, quality: "premium", meals: 60 };
   },
+  // live-like: premium undercutter that moves to the hungriest spot / busiest
+  prem11: () => (s) => ({ spot: s.last_day ? SPOTS.reduce((a, b) => ((s.last_day.spots[b].hungry || 0) > (s.last_day.spots[a].hungry || 0) ? b : a)) : busiest(s), price: 11, quality: "premium", meals: 56 }),
+  std95: () => (s) => ({ spot: SPOTS.reduce((a, b) => (s.forecast.expected_customers[b] / (1 + ((s.last_day && s.last_day.spots[b].trucks.length) || 0)) > s.forecast.expected_customers[a] / (1 + ((s.last_day && s.last_day.spots[a].trucks.length) || 0)) ? b : a)), price: 9.5, quality: "standard", meals: 60 }),
   // sticks to one spot all market
   loyal: (r) => { const sp = pick(SPOTS.filter((x) => x !== "stadium"), r); return () => ({ spot: sp, price: 11, quality: "standard", meals: 90 }); },
 };
