@@ -37,13 +37,22 @@ const ARCH = {
   // live-like: premium undercutter that moves to the hungriest spot / busiest
   prem11: () => (s) => ({ spot: s.last_day ? SPOTS.reduce((a, b) => ((s.last_day.spots[b].hungry || 0) > (s.last_day.spots[a].hungry || 0) ? b : a)) : busiest(s), price: 11, quality: "premium", meals: 56 }),
   std95: () => (s) => ({ spot: SPOTS.reduce((a, b) => (s.forecast.expected_customers[b] / (1 + ((s.last_day && s.last_day.spots[b].trucks.length) || 0)) > s.forecast.expected_customers[a] / (1 + ((s.last_day && s.last_day.spots[a].trucks.length) || 0)) ? b : a)), price: 9.5, quality: "standard", meals: 60 }),
+  // live-like herd (night of 2026-10-23): everyone piles onto tomorrow's event, else the busiest spot
+  eventprem: () => (s) => ({ spot: ((s.forecast.events || []).find((e) => e.spot) || {}).spot || busiest(s), price: 10.5, quality: "premium", meals: 90 }),
+  eventcheap: () => (s) => ({ spot: ((s.forecast.events || []).find((e) => e.spot) || {}).spot || busiest(s), price: 9.75, quality: "premium", meals: 90 }),
+  // goes wherever the most money was made yesterday
+  winner: () => (s) => {
+    let spot = busiest(s), top = 0;
+    if (s.last_day && s.last_day.spots) for (const [sp, i] of Object.entries(s.last_day.spots)) for (const t of i.trucks || []) if (t.sold * t.price > top) { top = t.sold * t.price; spot = sp; }
+    return { spot, price: 10.5, quality: "premium", meals: 90 };
+  },
   // sticks to one spot all market
   loyal: (r) => { const sp = pick(SPOTS.filter((x) => x !== "stadium"), r); return () => ({ spot: sp, price: 11, quality: "standard", meals: 90 }); },
 };
 
 function makeBot(spec, rng) {
-  if (spec.startsWith("v2")) {
-    const opts = { quiet: true };
+  if (spec.startsWith("v2") || spec.startsWith("v3")) {
+    const opts = { quiet: true, v3: spec.startsWith("v3") };
     const [, params] = spec.split(":");
     if (params) for (const kv of params.split(",")) { const [k, v] = kv.split("="); opts[k] = Number(v); }
     return makeStrategy(opts).decide;

@@ -5,8 +5,12 @@
 // start of a new final market, from what they did at the same day of earlier markets).
 const M = require("./model.js");
 
+// v3 (opts.v3): rivals are present-or-absent, not fractional. Each candidate is scored over
+// joint scenarios (weather x crowd noise x which rivals actually show up), so a likely herd
+// at the obvious spot shows up as a real risk; adds "event" and "winner" rival behaviours,
+// and sits the day out when nothing clears minProfit.
 function makeStrategy(opts = {}) {
-  const P = { repVal: 6, repHorizon: 8, stick: 0, priceStep: 0.25, ...opts };
+  const P = { repVal: 6, repHorizon: 8, stick: 0, priceStep: 0.25, v3: false, rivalSamples: 4, minProfit: 25, ...opts };
   let mem = null;          // per-market memory
   const crossMarket = {};  // truckId -> day -> offer, across final markets
 
@@ -52,6 +56,16 @@ function makeStrategy(opts = {}) {
     perTruck: (fc, pld) => argmax(Object.fromEntries(Object.entries(fc.expected_customers).map(([s, e]) => [s, e / (1 + ((pld && pld.spots && pld.spots[s] && pld.spots[s].trucks) || []).length)]))),
     busiest2: (fc) => Object.entries(fc.expected_customers).sort((a, b) => b[1] - a[1])[1][0],
   };
+  if (P.v3) {
+    // chase tomorrow's announced event; chase wherever the most money was made yesterday
+    HYP.event = (fc) => ((fc.events || []).find((e) => e.spot) || {}).spot || null;
+    HYP.winner = (fc, pld) => {
+      if (!pld || !pld.spots) return null;
+      let best = null, top = 0;
+      for (const [s, i] of Object.entries(pld.spots)) for (const t of i.trucks || []) { const rev = t.sold * t.price; if (rev > top) { top = rev; best = s; } }
+      return best;
+    };
+  }
   function argmax(o) { let b = null; for (const [k, v] of Object.entries(o)) if (b === null || v > o[b]) b = k; return b; }
   const hist = {}; // truckId -> [{hyp predictions, actual}]
   // optional persistence so a restarted bot keeps what it learned about rivals
@@ -111,7 +125,8 @@ function makeStrategy(opts = {}) {
         const off = prevSpot[tr.id].t;
         for (const [sp, pr] of Object.entries(spotDistribution(tr.id, p))) {
           if (pr < 0.05 || !out[sp]) continue;
-          out[sp].push({ quality: off.quality, price: off.price, meals: off.meals * pr, rep: rivalRep(state, tr.id, sp) });
+          if (P.v3) out[sp].push({ quality: off.quality, price: off.price, meals: off.meals, rep: rivalRep(state, tr.id, sp), p: pr, rid: tr.id });
+          else out[sp].push({ quality: off.quality, price: off.price, meals: off.meals * pr, rep: rivalRep(state, tr.id, sp) });
         }
       }
       pending = { day: state.order_for_day, preds };
@@ -130,8 +145,23 @@ function makeStrategy(opts = {}) {
     const exp = state.forecast.expected_customers, tot = Object.values(exp).reduce((a, b) => a + b, 0) || 1;
     for (const sp of state.rules.spots) {
       const k = n * exp[sp] / tot;
-      if (k > 0.05) out[sp].push({ quality: "standard", price: 10.5, meals: 120 * k, rep: 50 });
+      if (P.v3) { for (let j = 0; j < n; j++) if (k / n > 0.02) out[sp].push({ quality: "standard", price: 10.5, meals: 120, rep: 50, p: Math.min(0.95, k / n * 1.3), rid: "u" + j }); }
+      else if (k > 0.05) out[sp].push({ quality: "standard", price: 10.5, meals: 120 * k, rep: 50 });
     }
+    return out;
+  }
+
+  // v3: joint scenarios for one spot. Each weather/noise scenario is split into
+  // rivalSamples draws of which rivals show up (stratified, decorrelated per rival).
+  function jointScenarios(spot, fc, rivalsHere) {
+    const base = M.scenarios(spot, fc.weather), K = P.rivalSamples, S = base.length * K, out = [];
+    base.forEach(([mult, w], i) => {
+      for (let k = 0; k < K; k++) {
+        const j = i * K + k, present = [];
+        rivalsHere.forEach((r, ri) => { const u = ((j + 0.5) / S + ri * 0.6180339887) % 1; if (u < (r.p ?? 1)) present.push(r); });
+        out.push([mult, w / K, present]);
+      }
+    });
     return out;
   }
 
@@ -143,6 +173,7 @@ function makeStrategy(opts = {}) {
       const par = M.spotParams(spot, fc.events);
       const base = fc.expected_customers[spot] || 0;
       const scen = M.scenarios(spot, fc.weather);
+      const joint = P.v3 ? jointScenarios(spot, fc, rivals[spot]) : null;
       const myRep = (state.you.reputation && state.you.reputation[spot]) ?? 50;
       for (const quality of ["cheap", "standard", "premium"]) {
         const cost = rules.costs[quality];
@@ -151,8 +182,10 @@ function makeStrategy(opts = {}) {
         const lo = Math.ceil((cost + 0.5) / P.priceStep) * P.priceStep;
         for (let price = lo; price <= Math.min(rules.price_max, cap) + 1e-9; price += P.priceStep) {
           price = Math.round(price * 100) / 100;
-          const offers = rivals[spot].concat([{ quality, price, meals: 1e6, rep: myRep }]);
-          const D = scen.map(([mult, w]) => [M.clear(base * mult, par, offers)[offers.length - 1], w]);
+          const mine = { quality, price, meals: 1e6, rep: myRep };
+          let D;
+          if (joint) D = joint.map(([mult, w, present]) => { const offers = present.concat([mine]); return [M.clear(base * mult, par, offers)[offers.length - 1], w]; });
+          else { const offers = rivals[spot].concat([mine]); D = scen.map(([mult, w]) => [M.clear(base * mult, par, offers)[offers.length - 1], w]); }
           // newsvendor over the discrete scenarios
           D.sort((a, b) => a[0] - b[0]);
           let best = { m: 0, prof: 0, sold: 0 };
@@ -182,7 +215,11 @@ function makeStrategy(opts = {}) {
     scoreHypotheses(state);
     const rivals = predictRivals(state);
     const cands = evaluate(state, rivals);
-    const best = cands[0] || { spot: "union", quality: "standard", price: 10.5, meals: 40, prof: 0, sold: 0 };
+    let best = cands[0] || { spot: "union", quality: "standard", price: 10.5, meals: 40, prof: 0, sold: 0 };
+    if (P.v3 && !(cands[0] && cands[0].prof >= P.minProfit)) {
+      // nothing worth the risk: sit the day out (0 meals costs nothing)
+      best = { spot: best.spot, quality: "standard", price: 10, meals: 0, prof: 0, sold: 0 };
+    }
     mem.lastSpot = best.spot;
     if (!opts.quiet) console.log(`    plan: ${best.spot} ${best.quality} $${best.price} x${best.meals} (exp sold ${best.sold.toFixed(0)}, exp profit $${best.prof.toFixed(0)})`);
     return { spot: best.spot, price: best.price, quality: best.quality, meals: best.meals };

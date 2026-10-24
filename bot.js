@@ -246,7 +246,7 @@ async function play(base) {
         report(state);
         let order;
         if (STRATEGY === "v1") { learn(state); order = decide(state); mem.prevForecast = state.forecast; }
-        else order = V2.decide(state);
+        else { if (state.mode !== "practice") await addPublicReps(state); order = V2.decide(state); }
         const [st, res] = await call("POST", base + "/orders", order);
         if (st === 200) {
           orderedFor = key;
@@ -274,8 +274,21 @@ function report(state) {
   else console.log(`[${where}] night before day ${state.order_for_day}, cash $${cash}`);
 }
 
-const STRATEGY = process.argv.includes("--v1") ? "v1" : "v2";
-const V2 = require("./strategy.js").makeStrategy({ persistPath: require("path").join(__dirname, "data", "rivals.json") });
+const STRATEGY = process.argv.includes("--v1") ? "v1" : process.argv.includes("--v2") ? "v2" : "v3";
+const V2 = require("./strategy.js").makeStrategy({ v3: STRATEGY === "v3", persistPath: require("path").join(__dirname, "data", "rivals.json") });
+
+// The TV's public state has every truck's reputation per spot; ours only has averages.
+// Merge it in so rival offers are valued with their real reputation (1.5 s cap, optional).
+async function addPublicReps(state) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 1500);
+  try {
+    const r = await fetch(URL + "/api/v1/public/state", { signal: ctl.signal });
+    const pub = await r.json();
+    const reps = Object.fromEntries((pub.trucks || []).map((t) => [t.id, t.reputation]));
+    for (const t of state.trucks || []) if (reps[t.id]) t.reputation = reps[t.id];
+  } catch {} finally { clearTimeout(timer); }
+}
 
 async function main() {
   const args = process.argv.slice(2);
