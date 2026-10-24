@@ -275,7 +275,8 @@ function report(state) {
 }
 
 const STRATEGY = process.argv.includes("--v1") ? "v1" : process.argv.includes("--v2") ? "v2" : "v3";
-const V2 = require("./strategy.js").makeStrategy({ v3: STRATEGY === "v3", persistPath: require("path").join(__dirname, "data", "rivals.json") });
+const CAMP = process.argv.includes("--camp") ? process.argv[process.argv.indexOf("--camp") + 1] : null;
+const V2 = require("./strategy.js").makeStrategy({ v3: STRATEGY === "v3", camp: CAMP, persistPath: require("path").join(__dirname, "data", "rivals.json") });
 
 // The TV's public state has every truck's reputation per spot; ours only has averages.
 // Merge it in so rival offers are valued with their real reputation (1.5 s cap, optional).
@@ -292,7 +293,7 @@ async function addPublicReps(state) {
 
 async function main() {
   const args = process.argv.slice(2);
-  console.log("strategy " + STRATEGY);
+  console.log("strategy " + STRATEGY + (CAMP ? " camp " + CAMP : ""));
   const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   if (!KEY) { console.error("Set NIGHTSHIFT_KEY first (you get it when you register)."); process.exit(1); }
   if (args.includes("--practice")) {

@@ -10,7 +10,7 @@ const M = require("./model.js");
 // at the obvious spot shows up as a real risk; adds "event" and "winner" rival behaviours,
 // and sits the day out when nothing clears minProfit.
 function makeStrategy(opts = {}) {
-  const P = { repVal: 6, repHorizon: 8, stick: 0, priceStep: 0.25, v3: false, rivalSamples: 4, minProfit: 25, ...opts };
+  const P = { repVal: 6, repHorizon: 8, stick: 0, priceStep: 0.25, v3: false, rivalSamples: 4, minProfit: 25, camp: null, campMargin: 150, ...opts };
   let mem = null;          // per-market memory
   const crossMarket = {};  // truckId -> day -> offer, across final markets
 
@@ -216,7 +216,12 @@ function makeStrategy(opts = {}) {
     const rivals = predictRivals(state);
     const cands = evaluate(state, rivals);
     let best = cands[0] || { spot: "union", quality: "standard", price: 10.5, meals: 40, prof: 0, sold: 0 };
-    if (P.v3 && !(cands[0] && cands[0].prof >= P.minProfit)) {
+    if (P.camp) {
+      // camp one spot to build reputation; leave only when another spot is clearly better
+      const campBest = cands.find((c) => c.spot === P.camp);
+      if (campBest && !(best.spot !== P.camp && best.score > campBest.score + P.campMargin)) best = campBest;
+    }
+    if (P.v3 && !(best.meals > 0 && best.prof >= P.minProfit)) {
       // nothing worth the risk: sit the day out (0 meals costs nothing)
       best = { spot: best.spot, quality: "standard", price: 10, meals: 0, prof: 0, sold: 0 };
     }

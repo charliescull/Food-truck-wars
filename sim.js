@@ -54,7 +54,7 @@ function makeBot(spec, rng) {
   if (spec.startsWith("v2") || spec.startsWith("v3")) {
     const opts = { quiet: true, v3: spec.startsWith("v3") };
     const [, params] = spec.split(":");
-    if (params) for (const kv of params.split(",")) { const [k, v] = kv.split("="); opts[k] = Number(v); }
+    if (params) for (const kv of params.split(",")) { const [k, v] = kv.split("="); opts[k] = isNaN(Number(v)) ? v : Number(v); }
     return makeStrategy(opts).decide;
   }
   return ARCH[spec](rng);
