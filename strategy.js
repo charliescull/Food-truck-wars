@@ -43,15 +43,74 @@ function makeStrategy(opts = {}) {
     return (mem.rivalRep[id] && mem.rivalRep[id][spot]) ?? 50;
   }
 
+  // ---- rival behaviour models. Each hypothesis maps (forecast, previous last_day,
+  // previous spot) to a spot; we score them on each rival's history (kept across markets).
+  const HYP = {
+    stay: (fc, pld, prev) => prev,
+    busiest: (fc) => argmax(fc.expected_customers),
+    hungry: (fc, pld) => pld && pld.spots ? argmax(Object.fromEntries(Object.entries(pld.spots).map(([s, i]) => [s, i.hungry || 0]))) : null,
+    perTruck: (fc, pld) => argmax(Object.fromEntries(Object.entries(fc.expected_customers).map(([s, e]) => [s, e / (1 + ((pld && pld.spots && pld.spots[s] && pld.spots[s].trucks) || []).length)]))),
+    busiest2: (fc) => Object.entries(fc.expected_customers).sort((a, b) => b[1] - a[1])[1][0],
+  };
+  function argmax(o) { let b = null; for (const [k, v] of Object.entries(o)) if (b === null || v > o[b]) b = k; return b; }
+  const hist = {}; // truckId -> [{hyp predictions, actual}]
+  let pending = null; // what each hypothesis predicted last night, per truck
+
+  function scoreHypotheses(state) {
+    const last = state.last_day;
+    if (!pending || !last || !last.spots || last.day !== pending.day) return;
+    const actual = {};
+    for (const [sp, info] of Object.entries(last.spots)) for (const t of info.trucks || []) actual[t.id] = { spot: sp, price: t.price, quality: t.quality, meals: t.meals };
+    for (const [id, preds] of Object.entries(pending.preds)) {
+      const h = hist[id] = hist[id] || [];
+      h.push({ preds, actual: actual[id] ? actual[id].spot : null });
+      if (h.length > 40) h.shift();
+    }
+    for (const [id, a] of Object.entries(actual)) ((hist[id] = hist[id] || []).offer = a);
+    pending = null;
+  }
+
+  function spotDistribution(id, preds) {
+    const h = hist[id] || [];
+    const dist = {};
+    const played = h.filter((x) => x.actual);
+    // favourite spot frequency
+    const freq = {};
+    for (const x of played) freq[x.actual] = (freq[x.actual] || 0) + 1;
+    let wsum = 0;
+    for (const [name, sp] of Object.entries(preds)) {
+      if (!sp) continue;
+      let hit = 0, tot = 0;
+      played.forEach((x, k) => { const w = Math.pow(0.9, played.length - 1 - k); tot += w; if (x.preds[name] === x.actual) hit += w; });
+      const acc = tot ? (hit + 0.5) / (tot + 1) : 0.4;
+      const w = Math.pow(acc, 3);
+      dist[sp] = (dist[sp] || 0) + w; wsum += w;
+    }
+    if (played.length) for (const [sp, c] of Object.entries(freq)) { const w = 0.3 * Math.pow(c / played.length, 3); dist[sp] = (dist[sp] || 0) + w; wsum += w; }
+    for (const sp of Object.keys(dist)) dist[sp] /= wsum || 1;
+    return dist;
+  }
+
   function predictRivals(state) {
     const me = state.you.id, out = {};
     for (const sp of state.rules.spots) out[sp] = [];
     const last = state.last_day;
     if (last && last.spots && last.day >= 1) {
-      for (const [sp, info] of Object.entries(last.spots)) for (const t of info.trucks || []) {
-        if (t.id === me || !out[sp]) continue;
-        out[sp].push({ quality: t.quality, price: t.price, meals: t.meals, rep: rivalRep(state, t.id, sp) });
+      const prevSpot = {};
+      for (const [sp, info] of Object.entries(last.spots)) for (const t of info.trucks || []) prevSpot[t.id] = { spot: sp, t };
+      const preds = {};
+      for (const tr of state.trucks || []) {
+        if (tr.id === me || !prevSpot[tr.id]) continue;
+        const p = {};
+        for (const [name, f] of Object.entries(HYP)) { try { p[name] = f(state.forecast, last, prevSpot[tr.id].spot); } catch { p[name] = null; } }
+        preds[tr.id] = p;
+        const off = prevSpot[tr.id].t;
+        for (const [sp, pr] of Object.entries(spotDistribution(tr.id, p))) {
+          if (pr < 0.05 || !out[sp]) continue;
+          out[sp].push({ quality: off.quality, price: off.price, meals: off.meals * pr, rep: rivalRep(state, tr.id, sp) });
+        }
       }
+      pending = { day: state.order_for_day, preds };
       return out;
     }
     // first day of a market: use the same day from earlier final markets if we have it
@@ -116,6 +175,7 @@ function makeStrategy(opts = {}) {
   function decide(state) {
     memory(state);
     trackReps(state);
+    scoreHypotheses(state);
     const rivals = predictRivals(state);
     const cands = evaluate(state, rivals);
     const best = cands[0] || { spot: "union", quality: "standard", price: 10.5, meals: 40, prof: 0, sold: 0 };
