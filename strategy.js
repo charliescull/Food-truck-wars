@@ -54,6 +54,9 @@ function makeStrategy(opts = {}) {
   };
   function argmax(o) { let b = null; for (const [k, v] of Object.entries(o)) if (b === null || v > o[b]) b = k; return b; }
   const hist = {}; // truckId -> [{hyp predictions, actual}]
+  // optional persistence so a restarted bot keeps what it learned about rivals
+  if (opts.persistPath) { try { Object.assign(hist, JSON.parse(require("fs").readFileSync(opts.persistPath, "utf8"))); } catch {} }
+  const save = () => { if (opts.persistPath) try { require("fs").writeFileSync(opts.persistPath, JSON.stringify(hist)); } catch {} };
   let pending = null; // what each hypothesis predicted last night, per truck
 
   function scoreHypotheses(state) {
@@ -68,6 +71,7 @@ function makeStrategy(opts = {}) {
     }
     for (const [id, a] of Object.entries(actual)) ((hist[id] = hist[id] || []).offer = a);
     pending = null;
+    save();
   }
 
   function spotDistribution(id, preds) {

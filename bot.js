@@ -275,7 +275,7 @@ function report(state) {
 }
 
 const STRATEGY = process.argv.includes("--v1") ? "v1" : "v2";
-const V2 = require("./strategy.js").makeStrategy();
+const V2 = require("./strategy.js").makeStrategy({ persistPath: require("path").join(__dirname, "data", "rivals.json") });
 
 async function main() {
   const args = process.argv.slice(2);
