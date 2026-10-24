@@ -11,6 +11,14 @@
 // number of meals. Rivals are predicted from where they parked yesterday.
 // Demand estimates are calibrated from what actually happened.
 
+// Optional .env next to this file (gitignored): NIGHTSHIFT_KEY=fk_...
+try {
+  for (const line of require("fs").readFileSync(require("path").join(__dirname, ".env"), "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
+} catch {}
+
 const URL = (process.env.NIGHTSHIFT_URL || "https://nightshift.joinbuilders.org").replace(/\/$/, "");
 const KEY = process.env.NIGHTSHIFT_KEY || "";
 
