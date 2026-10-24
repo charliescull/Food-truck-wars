@@ -247,6 +247,13 @@ async function play(base) {
         let order;
         if (STRATEGY === "v1") { learn(state); order = decide(state); mem.prevForecast = state.forecast; }
         else { if (state.mode !== "practice") await addPublicReps(state); order = V2.decide(state); }
+        if (SHADOW && state.mode !== "practice") {
+          // decide but don't send: another bot owns the key; LIVE.md scores this against the real day
+          orderedFor = key;
+          console.log(`  shadow order for day ${state.order_for_day}: ${JSON.stringify(order)}`);
+          try { require("fs").appendFileSync(require("path").join(__dirname, "data", "shadow.jsonl"), JSON.stringify({ mode: state.mode, market: state.market, day: state.order_for_day, order }) + "\n"); } catch {}
+          continue;
+        }
         const [st, res] = await call("POST", base + "/orders", order);
         if (st === 200) {
           orderedFor = key;
@@ -275,6 +282,7 @@ function report(state) {
 }
 
 const STRATEGY = process.argv.includes("--v1") ? "v1" : process.argv.includes("--v2") ? "v2" : "v3";
+const SHADOW = process.argv.includes("--shadow");
 const CAMP = process.argv.includes("--camp") ? process.argv[process.argv.indexOf("--camp") + 1] : null;
 const V2 = require("./strategy.js").makeStrategy({ v3: STRATEGY === "v3", camp: CAMP, persistPath: require("path").join(__dirname, "data", "rivals.json") });
 
@@ -293,7 +301,7 @@ async function addPublicReps(state) {
 
 async function main() {
   const args = process.argv.slice(2);
-  console.log("strategy " + STRATEGY + (CAMP ? " camp " + CAMP : ""));
+  console.log("strategy " + STRATEGY + (CAMP ? " camp " + CAMP : "") + (SHADOW ? " SHADOW (not sending orders)" : ""));
   const opt = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   if (!KEY) { console.error("Set NIGHTSHIFT_KEY first (you get it when you register)."); process.exit(1); }
   if (args.includes("--practice")) {
